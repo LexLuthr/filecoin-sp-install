@@ -1,0 +1,103 @@
+---
+- hosts: all
+  become: true
+  tasks:
+    - name: Install dependencies
+      apt:
+        name:
+          - mesa-opencl-icd
+          - ocl-icd-opencl-dev
+          - gcc
+          - git
+          - bzr
+          - jq
+          - pkg-config
+          - curl
+          - clang
+          - make
+          - build-essential
+          - hwloc
+          - libhwloc-dev
+          - wget
+        state: present
+
+    - name: Install Go
+      get_url:
+        url: https://golang.org/dl/go1.20.3.linux-amd64.tar.gz
+        dest: /tmp/go.tar.gz
+      become_user: "{{ ansible_user }}"
+      register: go_download
+
+    - name: Extract Go
+      unarchive:
+        src: /tmp/go.tar.gz
+        dest: /usr/local
+        remote_src: true
+        creates: /usr/local/go
+
+    - name: Set Go environment variables
+      lineinfile:
+        dest: ~/.bashrc
+        line: |
+          export PATH=$PATH:/usr/local/go/bin
+          export GOPATH=$HOME/go
+          export LOTUS_PATH=$HOME/.lotus
+          export LOTUS_MINER_PATH=$HOME/.lotusminer
+      become_user: root
+
+    - name: Reload shell environment
+      shell: "exec -l {{ ansible_user }}"
+      args:
+        executable: /bin/bash
+
+    - name: Install Rust
+      shell: "curl https://sh.rustup.rs -sSf | sh -s -- -y"
+      become_user: "{{ ansible_user }}"
+
+    - name: Set Rust environment variables
+      lineinfile:
+        dest: ~/.bashrc
+        line: 'export PATH="$HOME/.cargo/bin:$PATH"'
+      become_user: root
+
+    - name: Add environment variables to ~/.bashrc
+      lineinfile:
+        dest: ~/.bashrc
+        line: '{{ item }}'
+        state: present
+        insertafter: '^# User specific environment'
+      become_user: "{{ ansible_user }}"
+      with_items:
+        - 'export RUSTFLAGS="-C target-cpu=native -g"'
+        - 'export FFI_BUILD_FROM_SOURCE=1'
+
+    - name: Reload shell environment
+      shell: "exec -l {{ ansible_user }}"
+      args:
+        executable: /bin/bash
+
+    - name: Clone Lotus repository and Checkout latest release of Lotus
+      git:
+        repo: https://github.com/filecoin-project/lotus.git
+        dest: "{{ ansible_user_dir }}/lotus"
+        version: "{{ lookup('url', 'https://api.github.com/repos/filecoin-project/lotus/releases/latest' | json_query('tag_name') ) }}"
+        update: yes
+      become_user: "{{ ansible_user }}"
+
+    - name: Build and install Lotus
+      shell: |
+        cd {{ ansible_user_dir }}/lotus
+        make clean && make all
+        sudo make install
+      become_user: "{{ ansible_user }}"
+
+    - name: Set Lotus environment variables
+      lineinfile:
+        dest: ~/.bashrc
+        line: 'export PATH=$PATH:{{ ansible_user_dir }}/lotus/lotus'
+      become_user: root
+
+    - name: Reload shell environment
+      shell: "exec -l {{ ansible_user }}"
+      args:
+        executable: /bin/bash

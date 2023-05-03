@@ -1,0 +1,64 @@
+---
+- hosts: all
+  become: true
+  tasks:
+    - name: Install Homebrew
+      shell: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      args:
+        creates: /usr/local/bin/brew
+
+    - name: Install dependencies
+      homebrew:
+        name:
+          - go
+          - bzr
+          - jq
+          - pkg-config
+          - rustup-init
+          - hwloc
+          - coreutils
+        state: present
+
+    - name: Install Xcode Command Line Tools
+      shell: xcode-select --install
+      args:
+        creates: /Library/Developer/CommandLineTools/usr/bin/git
+      ignore_errors: true
+
+    - name: Install Rust
+      shell: rustup-init -y
+      become_user: "{{ ansible_user }}"
+
+    - name: Set Rust environment variables
+      lineinfile:
+        dest: ~/.zprofile
+        line: 'export PATH="$HOME/.cargo/bin:$PATH"'
+      become_user: "{{ ansible_user }}"
+
+    - name: Add environment variables to ~/.bashrc
+      lineinfile:
+        dest: ~/.zprofile
+        line: '{{ item }}'
+        state: present
+        insertafter: '^# User specific environment'
+      become_user: "{{ ansible_user }}"
+      with_items:
+        - 'export LIBRARY_PATH=/opt/homebrew/lib'
+        - 'export FFI_BUILD_FROM_SOURCE=1'
+        - 'export PATH="$(brew --prefix coreutils)/libexec/gnubin:/usr/local/bin:$PATH"'
+
+    - name: Reload zsh
+      shell: exec zsh -l
+      become_user: "{{ ansible_user }}"
+
+    - name: Checkout latest release of Lotus
+      git:
+        repo: https://github.com/filecoin-project/lotus.git
+        dest: ~/lotus
+        version: "{{ lookup('url', 'https://api.github.com/repos/filecoin-project/lotus/releases/latest' | json_query('tag_name') ) }}"
+        update: yes
+      become_user: "{{ ansible_user }}"
+
+    - name: Build Lotus
+      shell: "cd ~/lotus && make clean && make all && sudo make install"
+      become_user: "{{ ansible_user }}"
